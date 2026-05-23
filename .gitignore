@@ -1,0 +1,4 @@
+avis.json
+.env
+__pycache__/
+*.pyc
