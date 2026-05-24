@@ -91,7 +91,7 @@ async def avis_config(interaction: discord.Interaction):
     embed = discord.Embed(
         title="⚙️ Configuration des rôles staff",
         description="Cliquez sur le bouton ci-dessous pour ajouter ou retirer des rôles autorisés à utiliser les commandes du bot.",
-        color=discord.Color.blue
+        color=discord.Color.blue()  # ✅ Corrigé
     )
 
     # Créer un bouton pour ouvrir le menu de configuration
@@ -157,7 +157,7 @@ async def avis(interaction: discord.Interaction, staff: discord.Member, note: in
     embed = discord.Embed(
         title="✅ Avis enregistré",
         description=f"Avis de **{interaction.user.name}** pour **{staff.name}** : {note}/5\n**Commentaire** : {commentaire}",
-        color=discord.Color.green
+        color=discord.Color.green()  # ✅ Corrigé
     )
     await interaction.response.send_message(embed=embed)
 
@@ -169,7 +169,7 @@ async def voir_avis(interaction: discord.Interaction, staff: discord.Member):
         embed = discord.Embed(
             title="❌ Aucun avis trouvé",
             description=f"Aucun avis n'a été enregistré pour **{staff.name}**.",
-            color=discord.Color.red
+            color=discord.Color.red()  # ✅ Corrigé
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
@@ -179,7 +179,7 @@ async def voir_avis(interaction: discord.Interaction, staff: discord.Member):
 
     embed = discord.Embed(
         title=f"📋 Avis pour {staff.name}",
-        color=discord.Color.blue
+        color=discord.Color.blue()  # ✅ Corrigé
     )
 
     for avis in avis_list:
