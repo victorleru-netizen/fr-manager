@@ -5,6 +5,7 @@ import os
 from dotenv import load_dotenv
 from flask import Flask
 import threading
+from discord import app_commands
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -67,7 +68,7 @@ def save_config(config):
 avis_data = load_avis()
 config = load_config()
 
-# Fonction pour vérifier si un membre est un staff
+# Fonction pour vérifier si le membre VISÉ est un staff
 def est_staff(member: discord.Member) -> bool:
     return any(role.id in config["roles_staff"] for role in member.roles)
 
@@ -81,20 +82,18 @@ async def on_ready():
         print(e)
 
 # Commande pour configurer les rôles staff
-@bot.tree.command(name="avis-config", description="Configurer les rôles autorisés à utiliser les commandes du bot")
+@bot.tree.command(name="avis-config", description="Configurer les rôles autorisés à recevoir des avis")
 async def avis_config(interaction: discord.Interaction):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("Seuls les administrateurs peuvent configurer le bot.", ephemeral=True)
         return
 
-    # Créer un embed pour l'interface de configuration
     embed = discord.Embed(
         title="⚙️ Configuration des rôles staff",
-        description="Cliquez sur le bouton ci-dessous pour ajouter ou retirer des rôles autorisés à utiliser les commandes du bot.",
-        color=discord.Color.blue()  # ✅ Corrigé
+        description="Cliquez sur le bouton ci-dessous pour ajouter ou retirer des rôles éligibles aux avis.",
+        color=discord.Color.blue()
     )
 
-    # Créer un bouton pour ouvrir le menu de configuration
     view = discord.ui.View(timeout=None)
     button = discord.ui.Button(label="Configurer les rôles", style=discord.ButtonStyle.primary, custom_id="config_roles")
     button.callback = lambda i: config_roles_callback(i, embed)
@@ -103,9 +102,11 @@ async def avis_config(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 async def config_roles_callback(interaction: discord.Interaction, embed: discord.Embed):
-    # Créer un menu déroulant avec tous les rôles du serveur
     roles = interaction.guild.roles
     options = [discord.SelectOption(label=role.name, value=str(role.id)) for role in roles if role.name != "@everyone"]
+
+    # Limiter à 25 rôles max affichés (limite Discord pour les SelectOption)
+    options = options[:25]
 
     select = discord.ui.Select(
         placeholder="Sélectionnez les rôles staff...",
@@ -119,9 +120,8 @@ async def config_roles_callback(interaction: discord.Interaction, embed: discord
         config["roles_staff"] = [int(role_id) for role_id in selected_roles]
         save_config(config)
 
-        # Mettre à jour l'embed pour confirmer
         roles_names = [interaction.guild.get_role(int(role_id)).name for role_id in selected_roles]
-        embed.description = f"✅ Rôles staff configurés : {', '.join(roles_names)}"
+        embed.description = f"✅ Rôles éligibles aux avis configurés : {', '.join(roles_names)}"
         await select_interaction.response.edit_message(embed=embed, view=None)
 
     select.callback = select_callback
@@ -131,45 +131,85 @@ async def config_roles_callback(interaction: discord.Interaction, embed: discord
 
     await interaction.response.edit_message(embed=embed, view=view)
 
-# Commande pour laisser un avis
+
+# Système d'autocomplétion pour proposer UNIQUEMENT les membres qui ont le rôle configuré
+async def staff_autocomplete(interaction: discord.Interaction, current: str):
+    guild = interaction.guild
+    if not guild:
+        return []
+    
+    choix = []
+    for member in guild.members:
+        # Vérifie si le membre a l'un des rôles configurés
+        if any(role.id in config["roles_staff"] for role in member.roles):
+            if current.lower() in member.name.lower() or current.lower() in (member.nick or "").lower():
+                choix.append(app_commands.Choice(name=member.display_name, value=str(member.id)))
+    
+    # Discord limite l'autocomplétion à 25 résultats maximum
+    return choix[:25]
+
+
+# Commande pour laisser un avis (Accessible par tout le monde)
 @bot.tree.command(name="avis", description="Laisser un avis sur un membre du staff")
-async def avis(interaction: discord.Interaction, staff: discord.Member, note: int, commentaire: str):
-    if not est_staff(interaction.user):
-        await interaction.response.send_message("Seuls les membres du staff peuvent laisser un avis.", ephemeral=True)
+@app_commands.autocomplete(staff=staff_autocomplete)
+@app_commands.describe(staff="Le membre du staff", note="Note de 1 à 5", commentaire="Votre commentaire")
+async def avis(interaction: discord.Interaction, staff: str, note: int, commentaire: str):
+    # Récupérer l'objet membre à partir de l'ID fourni par l'autocomplétion
+    try:
+        member = interaction.guild.get_member(int(staff))
+        if not member:
+            member = await interaction.guild.fetch_member(int(staff))
+    except Exception:
+        await interaction.response.send_message("❌ Membre introuvable. Veuillez utiliser la liste suggérée.", ephemeral=True)
+        return
+
+    # Sécurité : On revérifie si le membre ciblé est bien staff
+    if not est_staff(member):
+        await interaction.response.send_message(f"❌ **{member.display_name}** ne fait pas partie du staff configuré.", ephemeral=True)
         return
 
     if note < 1 or note > 5:
-        await interaction.response.send_message("La note doit être entre 1 et 5.", ephemeral=True)
+        await interaction.response.send_message("❌ La note doit être entre 1 et 5.", ephemeral=True)
         return
 
-    staff_id = str(staff.id)
+    staff_id = str(member.id)
     if staff_id not in avis_data:
-        avis_data[staff_id] = {"nom": staff.name, "avis": []}
+        avis_data[staff_id] = {"nom": member.name, "avis": []}
 
     avis_data[staff_id]["avis"].append({
         "auteur": interaction.user.name,
         "note": note,
         "commentaire": commentaire,
-        "date": str(interaction.created_at)
+        "date": interaction.created_at.strftime("%d/%m/%Y à %H:%M")
     })
     save_avis(avis_data)
 
     embed = discord.Embed(
         title="✅ Avis enregistré",
-        description=f"Avis de **{interaction.user.name}** pour **{staff.name}** : {note}/5\n**Commentaire** : {commentaire}",
-        color=discord.Color.green()  # ✅ Corrigé
+        description=f"Avis de **{interaction.user.name}** pour **{member.mention}** : {note}/5\n**Commentaire** : {commentaire}",
+        color=discord.Color.green()
     )
     await interaction.response.send_message(embed=embed)
 
+
 # Commande pour voir les avis
 @bot.tree.command(name="voir_avis", description="Voir les avis d'un membre du staff")
-async def voir_avis(interaction: discord.Interaction, staff: discord.Member):
-    staff_id = str(staff.id)
+@app_commands.autocomplete(staff=staff_autocomplete)
+async def voir_avis(interaction: discord.Interaction, staff: str):
+    try:
+        member = interaction.guild.get_member(int(staff))
+        if not member:
+            member = await interaction.guild.fetch_member(int(staff))
+    except Exception:
+        await interaction.response.send_message("❌ Membre introuvable. Veuillez utiliser la liste suggérée.", ephemeral=True)
+        return
+
+    staff_id = str(member.id)
     if staff_id not in avis_data or not avis_data[staff_id]["avis"]:
         embed = discord.Embed(
             title="❌ Aucun avis trouvé",
-            description=f"Aucun avis n'a été enregistré pour **{staff.name}**.",
-            color=discord.Color.red()  # ✅ Corrigé
+            description=f"Aucun avis n'a été enregistré pour **{member.display_name}**.",
+            color=discord.Color.red()
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
@@ -178,14 +218,14 @@ async def voir_avis(interaction: discord.Interaction, staff: discord.Member):
     moyenne = sum(a["note"] for a in avis_list) / len(avis_list)
 
     embed = discord.Embed(
-        title=f"📋 Avis pour {staff.name}",
-        color=discord.Color.blue()  # ✅ Corrigé
+        title=f"📋 Avis pour {member.display_name}",
+        color=discord.Color.blue()
     )
 
-    for avis in avis_list:
+    for avis_item in avis_list:
         embed.add_field(
-            name=f"⭐ {avis['note']}/5 - {avis['auteur']}",
-            value=f"\"{avis['commentaire']}\" - {avis['date']}",
+            name=f"⭐ {avis_item['note']}/5 - {avis_item['auteur']}",
+            value=f"\"{avis_item['commentaire']}\" - {avis_item['date']}",
             inline=False
         )
 
