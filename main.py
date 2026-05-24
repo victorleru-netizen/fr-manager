@@ -83,7 +83,6 @@ class DetailAvisModal(discord.ui.Modal):
         super().__init__(title=f"Avis : {staff_member.display_name}")
         self.staff_member = staff_member
 
-        # Les 4 critères demandés
         self.prof_input = discord.ui.TextInput(
             label="Professionnalisme (Note de 1 à 5)",
             placeholder="Sérieux et respect des procédures",
@@ -120,7 +119,6 @@ class DetailAvisModal(discord.ui.Modal):
             max_length=300
         )
 
-        # Ajout des éléments au formulaire
         self.add_item(self.prof_input)
         self.add_item(self.symp_input)
         self.add_item(self.rap_input)
@@ -128,7 +126,6 @@ class DetailAvisModal(discord.ui.Modal):
         self.add_item(self.comm_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Validation des notes
         try:
             n_prof = int(self.prof_input.value)
             n_symp = int(self.symp_input.value)
@@ -141,14 +138,12 @@ class DetailAvisModal(discord.ui.Modal):
             await interaction.response.send_message("❌ Toutes les notes doivent être des chiffres entiers compris entre 1 et 5.", ephemeral=True)
             return
 
-        # Calcul de la moyenne de cet avis
         note_moyenne_avis = (n_prof + n_symp + n_rap + n_ecoute) / 4
 
         staff_id = str(self.staff_member.id)
         if staff_id not in avis_data:
             avis_data[staff_id] = {"nom": self.staff_member.name, "avis": []}
 
-        # Sauvegarde des notes détaillées
         avis_data[staff_id]["avis"].append({
             "auteur": interaction.user.name,
             "note": note_moyenne_avis,
@@ -161,11 +156,9 @@ class DetailAvisModal(discord.ui.Modal):
         })
         save_avis(avis_data)
 
-        # Calcul de la moyenne générale globale du staff
         avis_list = avis_data[staff_id]["avis"]
         moyenne_generale = sum(a["note"] for a in avis_list) / len(avis_list)
 
-        # Génération des étoiles pour l'affichage
         e_prof = "⭐" * n_prof
         e_symp = "⭐" * n_symp
         e_rap = "⭐" * n_rap
@@ -206,7 +199,6 @@ class StaffSelect(discord.ui.Select):
             await interaction.response.send_message("❌ Ce membre du staff ne fait plus partie du serveur.", ephemeral=True)
             return
 
-        # Ouvre le formulaire à 4 critères pour le staff choisi
         await interaction.response.send_modal(DetailAvisModal(staff_member))
 
 
@@ -230,6 +222,44 @@ class PersistentAvisView(discord.ui.View):
 
         view = DropdownStaffView(membres_staff)
         await interaction.response.send_message("👇 Choisissez le membre du staff que vous souhaitez évaluer :", view=view, ephemeral=True)
+
+
+# ─── 🛠️ CONFIGURATION DES RÔLES STAFF (CORRIGÉE) ───
+class RoleSelect(discord.ui.Select):
+    def __init__(self, guild: discord.Guild):
+        options = [discord.SelectOption(label=role.name, value=str(role.id)) for role in guild.roles if role.name != "@everyone"][:25]
+        super().__init__(placeholder="Sélectionnez le ou les rôles staff...", min_values=1, max_values=len(options), options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_roles = self.values
+        config["roles_staff"] = [int(role_id) for role_id in selected_roles]
+        save_config(config)
+
+        roles_names = [interaction.guild.get_role(int(role_id)).name for role_id in selected_roles]
+        
+        embed = discord.Embed(
+            title="⚙️ Configuration mise à jour",
+            description=f"✅ Rôles éligibles aux avis configurés : **{', '.join(roles_names)}**",
+            color=discord.Color.green()
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+
+
+class ConfigRolesView(discord.ui.View):
+    def __init__(self, guild: discord.Guild):
+        super().__init__(timeout=300)
+        self.add_item(RoleSelect(guild))
+
+
+class InitialConfigView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Configurer les rôles", style=discord.ButtonStyle.primary, custom_id="config_roles_btn")
+    async def config_roles_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Correction ici : Utilisation correcte de view=view (au lieu de v=v)
+        view = ConfigRolesView(interaction.guild)
+        await interaction.response.edit_message(view=view)
 
 
 # ─── COMMANDES DU BOT ───
@@ -262,34 +292,11 @@ async def avis_config(interaction: discord.Interaction):
 
     embed = discord.Embed(
         title="⚙️ Configuration des rôles staff",
-        description="Cliquez sur le bouton ci-dessous pour ajouter ou retirer des rôles éligibles aux avis.",
+        description="Cliquez sur le bouton ci-dessous pour ouvrir la sélection des rôles éligibles aux avis.",
         color=discord.Color.blue()
     )
 
-    view = discord.ui.View(timeout=None)
-    button = discord.ui.Button(label="Configurer les rôles", style=discord.ButtonStyle.primary, custom_id="config_roles")
-    
-    async def config_roles_callback(i: discord.Interaction):
-        roles = i.guild.roles
-        options = [discord.SelectOption(label=role.name, value=str(role.id)) for role in roles if role.name != "@everyone"][:25]
-        select = discord.ui.Select(placeholder="Sélectionnez les rôles staff...", min_values=1, max_values=len(options), options=options)
-        
-        async def select_callback(si: discord.Interaction):
-            selected_roles = si.data["values"]
-            config["roles_staff"] = [int(role_id) for role_id in selected_roles]
-            save_config(config)
-            roles_names = [i.guild.get_role(int(role_id)).name for role_id in selected_roles]
-            embed.description = f"✅ Rôles éligibles aux avis configurés : {', '.join(roles_names)}"
-            await si.response.edit_message(embed=embed, view=None)
-            
-        select.callback = select_callback
-        v = discord.ui.View(timeout=None)
-        v.add_item(select)
-        await i.response.edit_message(embed=embed, v=v)
-
-    button.callback = config_roles_callback
-    view.add_item(button)
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+    await interaction.response.send_message(embed=embed, view=InitialConfigView(), ephemeral=True)
 
 
 async def staff_autocomplete(interaction: discord.Interaction, current: str):
