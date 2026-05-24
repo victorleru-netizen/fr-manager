@@ -104,8 +104,6 @@ async def avis_config(interaction: discord.Interaction):
 async def config_roles_callback(interaction: discord.Interaction, embed: discord.Embed):
     roles = interaction.guild.roles
     options = [discord.SelectOption(label=role.name, value=str(role.id)) for role in roles if role.name != "@everyone"]
-
-    # Limiter à 25 rôles max affichés (limite Discord pour les SelectOption)
     options = options[:25]
 
     select = discord.ui.Select(
@@ -132,7 +130,7 @@ async def config_roles_callback(interaction: discord.Interaction, embed: discord
     await interaction.response.edit_message(embed=embed, view=view)
 
 
-# Système d'autocomplétion pour proposer UNIQUEMENT les membres qui ont le rôle configuré
+# Système d'autocomplétion
 async def staff_autocomplete(interaction: discord.Interaction, current: str):
     guild = interaction.guild
     if not guild:
@@ -140,21 +138,18 @@ async def staff_autocomplete(interaction: discord.Interaction, current: str):
     
     choix = []
     for member in guild.members:
-        # Vérifie si le membre a l'un des rôles configurés
         if any(role.id in config["roles_staff"] for role in member.roles):
             if current.lower() in member.name.lower() or current.lower() in (member.nick or "").lower():
                 choix.append(app_commands.Choice(name=member.display_name, value=str(member.id)))
     
-    # Discord limite l'autocomplétion à 25 résultats maximum
     return choix[:25]
 
 
-# Commande pour laisser un avis (Accessible par tout le monde)
+# Commande pour laisser un avis (Design harmonisé)
 @bot.tree.command(name="avis", description="Laisser un avis sur un membre du staff")
 @app_commands.autocomplete(staff=staff_autocomplete)
 @app_commands.describe(staff="Le membre du staff", note="Note de 1 à 5", commentaire="Votre commentaire")
 async def avis(interaction: discord.Interaction, staff: str, note: int, commentaire: str):
-    # Récupérer l'objet membre à partir de l'ID fourni par l'autocomplétion
     try:
         member = interaction.guild.get_member(int(staff))
         if not member:
@@ -163,7 +158,6 @@ async def avis(interaction: discord.Interaction, staff: str, note: int, commenta
         await interaction.response.send_message("❌ Membre introuvable. Veuillez utiliser la liste suggérée.", ephemeral=True)
         return
 
-    # Sécurité : On revérifie si le membre ciblé est bien staff
     if not est_staff(member):
         await interaction.response.send_message(f"❌ **{member.display_name}** ne fait pas partie du staff configuré.", ephemeral=True)
         return
@@ -184,11 +178,15 @@ async def avis(interaction: discord.Interaction, staff: str, note: int, commenta
     })
     save_avis(avis_data)
 
+    etoiles = "⭐" * note
+    
+    # Nouveau design harmonisé pour la validation de l'avis
     embed = discord.Embed(
         title="✅ Avis enregistré",
-        description=f"Avis de **{interaction.user.name}** pour **{member.mention}** : {note}/5\n**Commentaire** : {commentaire}",
         color=discord.Color.green()
     )
+    embed.description = f"**Staff :** {member.mention}\n**Note :** {etoiles}\n**Commentaire :** *{commentaire}*"
+    
     await interaction.response.send_message(embed=embed)
 
 
@@ -218,18 +216,20 @@ async def voir_avis(interaction: discord.Interaction, staff: str):
     moyenne = sum(a["note"] for a in avis_list) / len(avis_list)
 
     embed = discord.Embed(
-        title=f"📋 Avis pour {member.display_name}",
+        title=f"📋 Profil de {member.display_name}",
         color=discord.Color.blue()
     )
+    
+    embed.description = f"**Staff :** {member.mention}\n**Moyenne globale :** {moyenne:.1f} / 5\n\n─── **Derniers avis reçus** ───"
 
     for avis_item in avis_list:
+        etoiles = "⭐" * avis_item['note']
         embed.add_field(
-            name=f"⭐ {avis_item['note']}/5 - {avis_item['auteur']}",
-            value=f"\"{avis_item['commentaire']}\" - {avis_item['date']}",
+            name=f"Par {avis_item['auteur']} (le {avis_item['date']})",
+            value=f"**Note :** {etoiles}\n**Commentaire :** *{avis_item['commentaire']}*",
             inline=False
         )
 
-    embed.add_field(name="📊 Moyenne", value=f"{moyenne:.2f}/5", inline=False)
     await interaction.response.send_message(embed=embed)
 
 # Récupérer le token depuis les variables d'environnement
