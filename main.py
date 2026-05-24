@@ -6,15 +6,13 @@ from dotenv import load_dotenv
 from flask import Flask
 import threading
 
-# Charger les variables d'environnement
+# Charger les variables d'environnement (pour le token)
 load_dotenv()
 
 # Configuration des intents
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-
-# Initialisation du bot
 bot = commands.Bot(command_prefix="/", intents=intents)
 
 # Initialisation de Flask pour maintenir le bot actif
@@ -47,6 +45,15 @@ def save_avis(avis):
 
 avis_data = load_avis()
 
+# Fonction pour vérifier si un membre est un staff
+def est_staff(member: discord.Member) -> bool:
+    # Remplace ces IDs par ceux des rôles "staff" de ton serveur
+    roles_staff = [
+        123456789012345678,  # ID du rôle "Modérateur"
+        987654321098765432   # ID du rôle "Administrateur"
+    ]
+    return any(role.id in roles_staff for role in member.roles)
+
 @bot.event
 async def on_ready():
     print(f"Bot connecté en tant que {bot.user}")
@@ -58,6 +65,11 @@ async def on_ready():
 
 @bot.tree.command(name="avis", description="Laisser un avis sur un membre du staff")
 async def avis(interaction: discord.Interaction, staff: discord.Member, note: int, commentaire: str):
+    # Vérifie si l'auteur de la commande est un staff
+    if not est_staff(interaction.user):
+        await interaction.response.send_message("Seuls les membres du staff peuvent laisser un avis.", ephemeral=True)
+        return
+
     if note < 1 or note > 5:
         await interaction.response.send_message("La note doit être entre 1 et 5.", ephemeral=True)
         return
@@ -84,7 +96,10 @@ async def voir_avis(interaction: discord.Interaction, staff: discord.Member):
 
     avis_list = avis_data[staff_id]["avis"]
     moyenne = sum(a["note"] for a in avis_list) / len(avis_list)
-    embed = discord.Embed(title=f"Avis pour {staff.name}", color=discord.Color.blue)
+    embed = discord.Embed(
+        title=f"Avis pour {staff.name}",
+        color=discord.Color.blue  # <-- Correction : pas de parenthèses
+    )
     for avis in avis_list:
         embed.add_field(
             name=f"{avis['auteur']} - {avis['note']}/5",
