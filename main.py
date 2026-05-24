@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from flask import Flask
 import threading
 from discord import app_commands
+from datetime import datetime, timedelta
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -146,6 +147,7 @@ class DetailAvisModal(discord.ui.Modal):
             return
 
         note_moyenne_avis = (n_prof + n_symp + n_rap + n_ecoute) / 4
+        maintenant_str = interaction.created_at.strftime("%d/%m/%Y %H:%M:%S")
 
         guild_id = str(interaction.guild.id)
         if guild_id not in avis_data:
@@ -155,15 +157,17 @@ class DetailAvisModal(discord.ui.Modal):
         if staff_id not in avis_data[guild_id]:
             avis_data[guild_id][staff_id] = {"nom": self.staff_member.name, "avis": []}
 
+        # Sauvegarde de l'avis avec l'ID du joueur et le timestamp complet
         avis_data[guild_id][staff_id]["avis"].append({
-            "auteur": interaction.user.name,
+            "auteur_id": str(interaction.user.id),
+            "auteur_nom": interaction.user.name,
             "note": note_moyenne_avis,
             "n_prof": n_prof,
             "n_symp": n_symp,
             "n_rap": n_rap,
             "n_ecoute": n_ecoute,
             "commentaire": self.comm_input.value,
-            "date": interaction.created_at.strftime("%d/%m/%Y à %H:%M")
+            "date": maintenant_str
         })
         save_avis(avis_data)
 
@@ -208,7 +212,7 @@ class DetailAvisModal(discord.ui.Modal):
             await interaction.response.send_message(embed=embed)
 
 
-# ─── SÉLECTION DU STAFF (MENU DÉROULANT) ───
+# ─── SÉLECTION DU STAFF (MENU DÉROULANT AVEC TIMEOUT 24H) ───
 class StaffSelect(discord.ui.Select):
     def __init__(self, membres_staff):
         options = [
@@ -218,13 +222,47 @@ class StaffSelect(discord.ui.Select):
         super().__init__(placeholder="Sélectionnez le membre du staff à évaluer...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        staff_id = int(self.values[0])
-        staff_member = interaction.guild.get_member(staff_id)
+        staff_id = self.values[0]
+        guild_id = str(interaction.guild.id)
+        user_id = str(interaction.user.id)
         
+        staff_member = interaction.guild.get_member(int(staff_id))
         if not staff_member:
             await interaction.response.send_message("❌ Ce membre du staff ne fait plus partie du serveur.", ephemeral=True)
             return
 
+        # 🕒 VERIFICATION DU COOLDOWN DE 24 HEURES
+        if guild_id in avis_data and staff_id in avis_data[guild_id]:
+            avis_list = avis_data[guild_id][staff_id]["avis"]
+            
+            # Filtrer tous les avis laissés par ce joueur précis pour ce staff précis
+            avis_joueur = [a for a in avis_list if a.get("auteur_id") == user_id]
+            
+            if avis_joueur:
+                # Récupérer le tout dernier avis en date
+                dernier_avis = avis_joueur[-1]
+                try:
+                    date_dernier_avis = datetime.strptime(dernier_avis["date"], "%d/%m/%Y %H:%M:%S")
+                except ValueError:
+                    # Rétrocompatibilité si l'ancien format sans les secondes était présent
+                    date_dernier_avis = datetime.strptime(dernier_avis["date"], "%d/%m/%Y à %H:%M")
+
+                # Calculer la différence de temps
+                temps_ecoule = datetime.utcnow() - date_dernier_avis
+                
+                if temps_ecoule < timedelta(hours=24):
+                    temps_restant = timedelta(hours=24) - temps_ecoule
+                    heures, reste = divmod(temps_restant.seconds, 3600)
+                    minutes, _ = divmod(reste, 60)
+                    
+                    await interaction.response.send_message(
+                        f"⏳ **Limite de temps :** Vous avez déjà évalué {staff_member.mention} il y a moins de 24h.\n"
+                        f"Veuillez attendre encore **{heures}h et {minutes}min** avant de pouvoir soumettre un nouvel avis sur ce staff.", 
+                        ephemeral=True
+                    )
+                    return
+
+        # Si pas de cooldown, on ouvre le modal normalement
         await interaction.response.send_modal(DetailAvisModal(staff_member))
 
 
@@ -250,7 +288,7 @@ class PersistentAvisView(discord.ui.View):
         await interaction.response.send_message("👇 Choisissez le membre du staff que vous souhaitez évaluer :", view=view, ephemeral=True)
 
 
-# ─── 🛠️ CONFIGURATION DES RÔLES ET SALONS (SÉCURISÉ MULTI-SERVEUR) ───
+# ─── CONFIGURATION DES RÔLES ET SALONS ───
 
 class ChannelSelectComponent(discord.ui.ChannelSelect):
     def __init__(self):
@@ -261,7 +299,7 @@ class ChannelSelectComponent(discord.ui.ChannelSelect):
 
     async def callback(self, interaction: discord.Interaction):
         guild_id = str(interaction.guild.id)
-        salon_choisi = self.values[0] # Récupère l'objet channel directement
+        salon_choisi = self.values[0]
         
         srv_cfg = get_server_config(guild_id)
         srv_cfg["salon_affichage"] = salon_choisi.id
@@ -408,7 +446,7 @@ async def voir_avis(interaction: discord.Interaction, staff: str):
     for avis_item in avis_list:
         etoiles = "⭐" * int(round(avis_item['note']))
         embed.add_field(
-            name=f"Par {avis_item['auteur']} (le {avis_item['date']})",
+            name=f"Par {avis_item.get('auteur_nom', 'Anonyme')} (le {avis_item['date']})",
             value=f"**Note moyenne :** {etoiles} ({avis_item['note']:.1f}/5)\n**Commentaire :** *{avis_item['commentaire']}*",
             inline=False
         )
