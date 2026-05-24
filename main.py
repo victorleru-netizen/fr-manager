@@ -69,22 +69,14 @@ def est_staff(member: discord.Member) -> bool:
     return any(role.id in config["roles_staff"] for role in member.roles)
 
 
-# ─── ÉTAPE 2 : FORCE SYNC SUR LE SERVEUR ───
+# ─── SYNCHRONISATION GLOBALE POUR BOT PUBLIC ───
 @bot.event
 async def on_ready():
     print(f"Bot connecté en tant que {bot.user}")
     try:
-        # 1. On efface d'abord les anciennes commandes globales en cache chez Discord
-        bot.tree.clear_commands(guild=None)
-        await bot.tree.sync(guild=None)
-        print("🗑️ Cache des anciennes commandes globales vidé avec succès.")
-
-        # 2. On synchronise instantanément les nouvelles commandes sur TOUS les serveurs actuels du bot
-        for guild in bot.guilds:
-            bot.tree.copy_global_to(guild=guild)
-            synced = await bot.tree.sync(guild=guild)
-            print(f"⚡ Synchronisation instantanée réussie sur le serveur : {guild.name} ({len(synced)} commandes)")
-            
+        # Enregistrement global (valable sur TOUS les serveurs)
+        synced = await bot.tree.sync()
+        print(f"🌍 Synchronisation globale réussie : {len(synced)} commandes enregistrées pour tout le monde !")
     except Exception as e:
         print(f"❌ Erreur lors de la synchronisation : {e}")
 
@@ -226,7 +218,7 @@ async def avis_config(interaction: discord.Interaction):
         select.callback = select_callback
         v = discord.ui.View(timeout=None)
         v.add_item(select)
-        await i.response.edit_message(embed=embed, v=v)
+        await i.response.edit_message(embed=embed, view=v)
 
     button.callback = config_roles_callback
     view.add_item(button)
