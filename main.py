@@ -32,29 +32,37 @@ flask_thread.start()
 AVIS_FILE = "avis.json"
 CONFIG_FILE = "config.json"
 
-# Charger les avis existants
+# Charger les avis existants (Sécurisé)
 def load_avis():
     if os.path.exists(AVIS_FILE):
-        with open(AVIS_FILE, "r") as f:
-            return json.load(f)
+        try:
+            with open(AVIS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            print(f"⚠️ Erreur de lecture dans {AVIS_FILE}, réinitialisation...")
+            return {}
     return {}
 
 # Sauvegarder les avis
 def save_avis(avis):
-    with open(AVIS_FILE, "w") as f:
-        json.dump(avis, f, indent=4)
+    with open(AVIS_FILE, "w", encoding="utf-8") as f:
+        json.dump(avis, f, indent=4, ensure_ascii=False)
 
-# Charger la configuration des rôles staff
+# Charger la configuration des rôles staff (Sécurisé)
 def load_config():
     if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f:
-            return json.load(f)
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            print(f"⚠️ Erreur de lecture dans {CONFIG_FILE}, réinitialisation...")
+            return {"roles_staff": []}
     return {"roles_staff": []}
 
 # Sauvegarder la configuration
 def save_config(config):
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f, indent=4)
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=4, ensure_ascii=False)
 
 avis_data = load_avis()
 config = load_config()
@@ -148,4 +156,42 @@ async def avis(interaction: discord.Interaction, staff: discord.Member, note: in
 
     embed = discord.Embed(
         title="✅ Avis enregistré",
-        description=f"Avis de **{interaction.user.name}** pour **{staff.name}** : {
+        description=f"Avis de **{interaction.user.name}** pour **{staff.name}** : {note}/5\n**Commentaire** : {commentaire}",
+        color=discord.Color.green
+    )
+    await interaction.response.send_message(embed=embed)
+
+# Commande pour voir les avis
+@bot.tree.command(name="voir_avis", description="Voir les avis d'un membre du staff")
+async def voir_avis(interaction: discord.Interaction, staff: discord.Member):
+    staff_id = str(staff.id)
+    if staff_id not in avis_data or not avis_data[staff_id]["avis"]:
+        embed = discord.Embed(
+            title="❌ Aucun avis trouvé",
+            description=f"Aucun avis n'a été enregistré pour **{staff.name}**.",
+            color=discord.Color.red
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+
+    avis_list = avis_data[staff_id]["avis"]
+    moyenne = sum(a["note"] for a in avis_list) / len(avis_list)
+
+    embed = discord.Embed(
+        title=f"📋 Avis pour {staff.name}",
+        color=discord.Color.blue
+    )
+
+    for avis in avis_list:
+        embed.add_field(
+            name=f"⭐ {avis['note']}/5 - {avis['auteur']}",
+            value=f"\"{avis['commentaire']}\" - {avis['date']}",
+            inline=False
+        )
+
+    embed.add_field(name="📊 Moyenne", value=f"{moyenne:.2f}/5", inline=False)
+    await interaction.response.send_message(embed=embed)
+
+# Récupérer le token depuis les variables d'environnement
+TOKEN = os.getenv("DISCORD_TOKEN")
+bot.run(TOKEN)
