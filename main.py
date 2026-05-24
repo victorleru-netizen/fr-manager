@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from flask import Flask
 import threading
 
-# Charger les variables d'environnement (pour le token)
+# Charger les variables d'environnement
 load_dotenv()
 
 # Configuration des intents
@@ -28,8 +28,9 @@ def run_flask():
 flask_thread = threading.Thread(target=run_flask)
 flask_thread.start()
 
-# Fichier pour stocker les avis
+# Fichier pour stocker les avis et la configuration
 AVIS_FILE = "avis.json"
+CONFIG_FILE = "config.json"
 
 # Charger les avis existants
 def load_avis():
@@ -43,16 +44,24 @@ def save_avis(avis):
     with open(AVIS_FILE, "w") as f:
         json.dump(avis, f, indent=4)
 
+# Charger la configuration des rôles staff
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r") as f:
+            return json.load(f)
+    return {"roles_staff": []}
+
+# Sauvegarder la configuration
+def save_config(config):
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=4)
+
 avis_data = load_avis()
+config = load_config()
 
 # Fonction pour vérifier si un membre est un staff
 def est_staff(member: discord.Member) -> bool:
-    # Remplace ces IDs par ceux des rôles "staff" de ton serveur
-    roles_staff = [
-        123456789012345678,  # ID du rôle "Modérateur"
-        987654321098765432   # ID du rôle "Administrateur"
-    ]
-    return any(role.id in roles_staff for role in member.roles)
+    return any(role.id in config["roles_staff"] for role in member.roles)
 
 @bot.event
 async def on_ready():
@@ -63,9 +72,60 @@ async def on_ready():
     except Exception as e:
         print(e)
 
+# Commande pour configurer les rôles staff
+@bot.tree.command(name="avis-config", description="Configurer les rôles autorisés à utiliser les commandes du bot")
+async def avis_config(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("Seuls les administrateurs peuvent configurer le bot.", ephemeral=True)
+        return
+
+    # Créer un embed pour l'interface de configuration
+    embed = discord.Embed(
+        title="⚙️ Configuration des rôles staff",
+        description="Cliquez sur le bouton ci-dessous pour ajouter ou retirer des rôles autorisés à utiliser les commandes du bot.",
+        color=discord.Color.blue
+    )
+
+    # Créer un bouton pour ouvrir le menu de configuration
+    view = discord.ui.View(timeout=None)
+    button = discord.ui.Button(label="Configurer les rôles", style=discord.ButtonStyle.primary, custom_id="config_roles")
+    button.callback = lambda i: config_roles_callback(i, embed)
+    view.add_item(button)
+
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+async def config_roles_callback(interaction: discord.Interaction, embed: discord.Embed):
+    # Créer un menu déroulant avec tous les rôles du serveur
+    roles = interaction.guild.roles
+    options = [discord.SelectOption(label=role.name, value=str(role.id)) for role in roles if role.name != "@everyone"]
+
+    select = discord.ui.Select(
+        placeholder="Sélectionnez les rôles staff...",
+        min_values=1,
+        max_values=len(options),
+        options=options
+    )
+
+    async def select_callback(select_interaction: discord.Interaction):
+        selected_roles = select_interaction.data["values"]
+        config["roles_staff"] = [int(role_id) for role_id in selected_roles]
+        save_config(config)
+
+        # Mettre à jour l'embed pour confirmer
+        roles_names = [interaction.guild.get_role(int(role_id)).name for role_id in selected_roles]
+        embed.description = f"✅ Rôles staff configurés : {', '.join(roles_names)}"
+        await select_interaction.response.edit_message(embed=embed, view=None)
+
+    select.callback = select_callback
+
+    view = discord.ui.View(timeout=None)
+    view.add_item(select)
+
+    await interaction.response.edit_message(embed=embed, view=view)
+
+# Commande pour laisser un avis
 @bot.tree.command(name="avis", description="Laisser un avis sur un membre du staff")
 async def avis(interaction: discord.Interaction, staff: discord.Member, note: int, commentaire: str):
-    # Vérifie si l'auteur de la commande est un staff
     if not est_staff(interaction.user):
         await interaction.response.send_message("Seuls les membres du staff peuvent laisser un avis.", ephemeral=True)
         return
@@ -85,30 +145,7 @@ async def avis(interaction: discord.Interaction, staff: discord.Member, note: in
         "date": str(interaction.created_at)
     })
     save_avis(avis_data)
-    await interaction.response.send_message(f"Avis enregistré pour {staff.name} : {note}/5 - {commentaire}")
 
-@bot.tree.command(name="voir_avis", description="Voir les avis d'un membre du staff")
-async def voir_avis(interaction: discord.Interaction, staff: discord.Member):
-    staff_id = str(staff.id)
-    if staff_id not in avis_data or not avis_data[staff_id]["avis"]:
-        await interaction.response.send_message(f"Aucun avis trouvé pour {staff.name}.", ephemeral=True)
-        return
-
-    avis_list = avis_data[staff_id]["avis"]
-    moyenne = sum(a["note"] for a in avis_list) / len(avis_list)
     embed = discord.Embed(
-        title=f"Avis pour {staff.name}",
-        color=discord.Color.blue  # <-- Correction : pas de parenthèses
-    )
-    for avis in avis_list:
-        embed.add_field(
-            name=f"{avis['auteur']} - {avis['note']}/5",
-            value=f"{avis['commentaire']} ({avis['date']})",
-            inline=False
-        )
-    embed.add_field(name="Moyenne", value=f"{moyenne:.2f}/5")
-    await interaction.response.send_message(embed=embed)
-
-# Récupérer le token depuis les variables d'environnement
-TOKEN = os.getenv("DISCORD_TOKEN")
-bot.run(TOKEN)
+        title="✅ Avis enregistré",
+        description=f"Avis de **{interaction.user.name}** pour **{staff.name}** : {
